@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Engine — Technical Deep Dive</title>
+    <!-- Include Mermaid.js for professional, dynamic flowcharts -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                fontFamily: '"Inter", "Segoe UI", sans-serif',
+                primaryColor: '#f0f4f8',
+                primaryTextColor: '#334155',
+                primaryBorderColor: '#94a3b8',
+                lineColor: '#64748b',
+                secondaryColor: '#e2e8f0',
+                tertiaryColor: '#f8fafc',
+                noteBkgColor: '#f1f5f9',
+                noteTextColor: '#1e293b',
+                errorBkgColor: '#fef2f2',
+                errorTextColor: '#991b1b'
+            },
+            flowchart: { curve: 'smooth' }
+        });
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
+
+        :root {
+            /* Eye-friendly, soft professional palette */
+            --bg-page: #f8fafc;
+            --bg-surface: #ffffff;
+            --text-main: #334155;
+            --text-muted: #64748b;
+            --border-light: #e2e8f0;
+            --border-focus: #cbd5e1;
+            
+            --accent-blue: #3b82f6;
+            --accent-blue-soft: #eff6ff;
+            --accent-slate: #475569;
+            --accent-slate-soft: #f1f5f9;
+            --accent-red: #ef4444;
+            --accent-red-soft: #fef2f2;
+            
+            --font-sans: 'Inter', system-ui, sans-serif;
+            --font-mono: 'Fira Code', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            line-height: 1.6;
+            padding-bottom: 6rem;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Presentation Wrapper */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 4rem 0 3rem;
+            text-align: center;
+        }
+
+        .hero-eyebrow {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--accent-blue);
+            margin-bottom: 1rem;
+        }
+
+        .hero h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 1rem;
+            letter-spacing: -0.02em;
+        }
+
+        .hero p {
+            max-width: 700px;
+            margin: 0 auto;
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        /* Content Blocks (Slides/Sections) */
+        .section {
+            margin-top: 3rem;
+            scroll-margin-top: 80px;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section-number {
+            background: var(--accent-blue-soft);
+            color: var(--accent-blue);
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 0.85rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .section h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        .section-description {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            max-width: 800px;
+        }
+
+        /* Cards and Panels */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-light);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .panel:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.03), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+        }
+
+        .panel-title {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .dot-fd { background-color: var(--accent-blue); }
+        .dot-me { background-color: var(--accent-slate); }
+
+        /* Schema Data */
+        .schema-row {
+            display: flex;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-light);
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .schema-row:last-child {
+            border-bottom: none;
+        }
+
+        .schema-field {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-main);
+            flex: 0 0 200px;
+        }
+
+        .schema-type {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--accent-slate);
+            background: var(--accent-slate-soft);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .schema-note {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            flex: 1;
+        }
+
+        /* Code Blocks */
+        pre {
+            background: #1e293b;
+            color: #f8fafc;
+            padding: 1.5rem;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            overflow-x: auto;
+            line-height: 1.5;
+        }
+        .code-key { color: #7dd3fc; }
+        .code-str { color: #a3e635; }
+        .code-num { color: #f472b6; }
+
+        .query-block {
+            background: var(--accent-slate-soft);
+            border: 1px solid var(--border-light);
+            padding: 1.25rem;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--text-main);
+            line-height: 1.7;
+        }
+        .query-block strong { color: var(--accent-blue); }
+
+        /* Info Note */
+        .note {
+            background: var(--accent-blue-soft);
+            border-left: 4px solid var(--accent-blue);
+            padding: 1rem 1.5rem;
+            border-radius: 0 8px 8px 0;
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+            color: var(--text-main);
+        }
+        .note strong {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--accent-blue);
+            margin-right: 0.5rem;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-light);
+        }
+        th {
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            background: var(--bg-page);
+        }
+        td.arrow {
+            color: var(--border-focus);
+            text-align: center;
+            font-weight: bold;
+        }
+
+        /* Pipeline Steps */
+        .pipeline {
+            display: flex;
+            gap: 1rem;
+            overflow-x: auto;
+            padding-bottom: 1rem;
+        }
+        .pipe-step {
+            flex: 1;
+            min-width: 200px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-light);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-top: 4px solid var(--accent-blue);
+        }
+        .pipe-step h4 {
+            font-size: 1rem;
+            margin: 0.5rem 0;
+            color: var(--text-main);
+        }
+        .pipe-step p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .pipe-num {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        /* Mermaid Diagram Container */
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 1.5rem 0;
+        }
+        .mermaid svg {
+            max-width: 100%;
+            height: auto;
+        }
+
+        /* Full-width stacked layout (for wide, left-to-right diagrams) */
+        .stack {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .stack .mermaid {
+            overflow-x: auto;
+        }
+
+        /* Contents / Index Table */
+        .index-table table { width: 100%; }
+        .index-table col.col-no { width: 3.5rem; }
+        .index-table col.col-jump { width: 2.5rem; }
+        .index-table .idx-num {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--accent-blue);
+            font-size: 0.85rem;
+        }
+        .index-table .idx-title a {
+            color: var(--text-main);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .index-table .idx-desc {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        .index-table tbody tr { transition: background 0.15s; }
+        .index-table tbody tr:hover { background: var(--accent-blue-soft); }
+        .index-table tbody tr:hover .idx-title a { color: var(--accent-blue); }
+        .index-table tbody tr:last-child td { border-bottom: none; }
+        .index-table td.arrow {
+            opacity: 0.5;
+            transition: opacity 0.15s, transform 0.15s;
+        }
+        .index-table tbody tr:hover td.arrow { opacity: 1; transform: translateX(2px); }
+
+        /* Sub-heading used to separate merged topics within one slide */
+        .slide-subhead {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 2rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        /* Slide Presentation Mode */
+        /* Gated behind body.slides-ready so every slide stays visible (and
+           Mermaid can measure/render its diagrams) until JS has finished
+           running mermaid.run() - only then do we hide the non-active ones. */
+        body.slides-ready .hero,
+        body.slides-ready .section {
+            display: none;
+        }
+        body.slides-ready .hero.active,
+        body.slides-ready .section.active {
+            display: block;
+        }
+
+        .slide-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-light);
+            box-shadow: 0 -1px 3px rgba(0,0,0,0.04);
+            z-index: 100;
+        }
+        .slide-nav-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0.85rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+        .slide-nav-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: var(--accent-blue-soft);
+            color: var(--accent-blue);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 8px;
+            padding: 0.5rem 1.1rem;
+            font-family: var(--font-sans);
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: background 0.15s, opacity 0.15s;
+        }
+        .slide-nav-btn:hover:not(:disabled) {
+            background: #dbeafe;
+        }
+        .slide-nav-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+        .slide-page-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+        }
+        .slide-page-text {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            min-width: 3.5rem;
+            text-align: center;
+        }
+        .slide-dots {
+            display: flex;
+            gap: 0.4rem;
+        }
+        .slide-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--border-focus);
+            cursor: pointer;
+            border: none;
+            padding: 0;
+            transition: background 0.15s, transform 0.15s;
+        }
+        .slide-dot:hover {
+            background: var(--text-muted);
+        }
+        .slide-dot.active {
+            background: var(--accent-blue);
+            transform: scale(1.35);
+        }
+
+        /* Print */
+        @page {
+            size: landscape;
+            margin: 0.4in 0.5in;
+        }
+        @media print {
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            body { padding-bottom: 0; }
+            .slide-nav { display: none; }
+            .hero, .section {
+                display: block !important;
+                page-break-after: always;
+                page-break-inside: avoid;
+            }
+            .section:last-of-type { page-break-after: auto; }
+            .panel { box-shadow: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <main class="container">
+        
+        <section class="hero">
+            <div class="hero-eyebrow">Barambee Helpdesk & ManageEngine · Built on Zoho Flow</div>
+            <h1>How the Sync Engine Actually Works</h1>
+            <p>The exact fields, conditions, and decision logic behind the bidirectional sync. Every diagram reflects the real field names configured in Freshdesk and ManageEngine.</p>
+
+            <div class="panel index-table" style="margin-top: 2.5rem; text-align: left;">
+                <table>
+                    <colgroup>
+                        <col class="col-no"><col><col><col class="col-jump">
+                    </colgroup>
+                    <thead>
+                        <tr><th>No.</th><th>Section</th><th>What it covers</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><span class="idx-num">01</span></td><td class="idx-title"><a href="#contract">Data Contract</a></td><td class="idx-desc">Two normalized event shapes, plus an example payload</td><td class="arrow">→</td></tr>
+                        <tr><td><span class="idx-num">02</span></td><td class="idx-title"><a href="#loop">Loop Prevention & ID Matching</a></td><td class="idx-desc">Stops infinite update loops, then resolves the matching record via indexed lookup</td><td class="arrow">→</td></tr>
+                        <tr><td><span class="idx-num">03</span></td><td class="idx-title"><a href="#flows">Sync Flows</a></td><td class="idx-desc">Decision trees for ticket creation and updates</td><td class="arrow">→</td></tr>
+                        <tr><td><span class="idx-num">04</span></td><td class="idx-title"><a href="#change">Change Detection, Field Mapping & Pipeline</a></td><td class="idx-desc">Hash comparison, field translation, and the full event lifecycle in five steps</td><td class="arrow">→</td></tr>
+                        <tr><td><span class="idx-num">05</span></td><td class="idx-title"><a href="#live">Live Build Log</a></td><td class="idx-desc">ME → Freshservice, as actually built and tested — real functions, real bugs fixed</td><td class="arrow">→</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 1. DATA CONTRACT -->
+        <section class="section" id="contract">
+            <div class="section-header">
+                <span class="section-number">01</span>
+                <h2>The Data Contract</h2>
+            </div>
+            <p class="section-description">Every trigger is normalized into one of these two event shapes before any logic runs. Built manually inside each platform's automation rules.</p>
+
+            <div class="grid-2">
+                <div class="panel">
+                    <h3 class="panel-title"><span class="status-dot dot-fd"></span>Freshdesk-Origin Event</h3>
+                    <div class="schema-row"><span class="schema-field">event_type</span><span class="schema-type">string</span><span class="schema-note">"ticket_created" or "ticket_updated"</span></div>
+                    <div class="schema-row"><span class="schema-field">source_system</span><span class="schema-type">string</span><span class="schema-note">always "FRESHDESK"</span></div>
+                    <div class="schema-row"><span class="schema-field">freshdesk_ticket_id</span><span class="schema-type">string</span><span class="schema-note">Freshdesk's own ticket ID</span></div>
+                    <div class="schema-row"><span class="schema-field">manageengine_ticket_id</span><span class="schema-type">str | null</span><span class="schema-note">null until first linked</span></div>
+                    <div class="schema-row"><span class="schema-field">tags</span><span class="schema-type">array</span><span class="schema-note">checked for "IT-Desk-Synced"</span></div>
+                    <div class="schema-row"><span class="schema-field">ticket_data</span><span class="schema-type">object</span><span class="schema-note">subject, desc, priority, status</span></div>
+                </div>
+
+                <div class="panel">
+                    <h3 class="panel-title"><span class="status-dot dot-me"></span>ManageEngine-Origin Event</h3>
+                    <div class="schema-row"><span class="schema-field">event_type</span><span class="schema-type">string</span><span class="schema-note">"request_created" or "updated"</span></div>
+                    <div class="schema-row"><span class="schema-field">source_system</span><span class="schema-type">string</span><span class="schema-note">always "MANAGEENGINE"</span></div>
+                    <div class="schema-row"><span class="schema-field">manageengine_ticket_id</span><span class="schema-type">string</span><span class="schema-note">ManageEngine's request ID</span></div>
+                    <div class="schema-row"><span class="schema-field">freshdesk_ticket_id</span><span class="schema-type">str | null</span><span class="schema-note">null until first linked</span></div>
+                    <div class="schema-row"><span class="schema-field">request_data</span><span class="schema-type">object</span><span class="schema-note">subject, desc, priority, status</span></div>
+                </div>
+            </div>
+
+            <div class="panel" style="margin-top: 1.5rem;">
+                <h3 class="panel-title">Example JSON Payload</h3>
+<pre>{
+  <span class="code-key">"event_type"</span>: <span class="code-str">"ticket_updated"</span>,
+  <span class="code-key">"source_system"</span>: <span class="code-str">"FRESHDESK"</span>,
+  <span class="code-key">"freshdesk_ticket_id"</span>: <span class="code-str">"FD-10294"</span>,
+  <span class="code-key">"manageengine_ticket_id"</span>: <span class="code-str">"ME-88371"</span>,
+  <span class="code-key">"tags"</span>: [<span class="code-str">"urgent"</span>, <span class="code-str">"IT-Desk-Synced"</span>],
+  <span class="code-key">"ticket_data"</span>: {
+    <span class="code-key">"subject"</span>: <span class="code-str">"VPN connection drops every 10 minutes"</span>,
+    <span class="code-key">"priority"</span>: <span class="code-str">"High"</span>
+  }
+}</pre>
+                <div class="note"><strong>Note:</strong> Getting <code>manageengine_ticket_id</code> onto the Freshdesk side requires a new custom field.</div>
+            </div>
+        </section>
+
+        <!-- 2. LOOP PREVENTION + ID MATCHING -->
+        <section class="section" id="loop">
+            <div class="section-header">
+                <span class="section-number">02</span>
+                <h2>Loop Prevention & ID Matching</h2>
+            </div>
+            <p class="section-description">The first two checks on every event: halt immediately if it's an echo of our own last write, otherwise resolve the matching record on the other platform via an indexed lookup.</p>
+
+            <h3 class="slide-subhead">Loop Prevention Logic</h3>
+            <div class="grid-2">
+                <div class="panel">
+                    <h3 class="panel-title">Freshdesk Source</h3>
+                    <div class="mermaid">
+                        graph TD
+                        A(Freshdesk Event) --> B{tags.includes<br>'IT-Desk-Synced'?}
+                        B -- YES --> C[Halt Sync]
+                        B -- NO --> D(Continue to ID Match)
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        classDef pass fill:#eff6ff,stroke:#3b82f6,stroke-width:2px;
+                        class C stop
+                        class D pass
+                    </div>
+                </div>
+                <div class="panel">
+                    <h3 class="panel-title">ManageEngine Source</h3>
+                    <div class="mermaid">
+                        graph TD
+                        A(ManageEngine Event) --> B{freshdesk_ticket_id<br>!= null?}
+                        B -- YES --> C[Halt Sync]
+                        B -- NO --> D(Continue to ID Match)
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        classDef pass fill:#eff6ff,stroke:#3b82f6,stroke-width:2px;
+                        class C stop
+                        class D pass
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="slide-subhead">ID Translation & Matching</h3>
+            <div class="grid-2">
+                <div class="panel">
+                    <h3 class="panel-title">Freshdesk to ManageEngine</h3>
+                    <div class="query-block">
+                        <strong>SEARCH</strong> ManageEngine.Requests<br>
+                        <strong>WHERE</strong> freshdesk_ticket_id = incoming.freshdesk_ticket_id
+                    </div>
+                </div>
+                <div class="panel">
+                    <h3 class="panel-title">ManageEngine to Freshdesk</h3>
+                    <div class="query-block">
+                        <strong>SEARCH</strong> Freshdesk.Tickets<br>
+                        <strong>WHERE</strong> manageengine_ticket_id = incoming.manageengine_ticket_id
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. SYNC FLOWS -->
+        <section class="section" id="flows">
+            <div class="section-header">
+                <span class="section-number">03</span>
+                <h2>Sync Execution Flows</h2>
+            </div>
+            <p class="section-description">The decision trees for Creation and Updates traversing across the platforms.</p>
+
+            <div class="stack">
+                <div class="panel">
+                    <h3 class="panel-title">Create Flow (FD → ME)</h3>
+                    <div class="mermaid">
+                        graph LR
+                        A[Ticket Created] --> B{Loop Check}
+                        B -- Fails --> H[Halt]
+                        B -- Passes --> C[Search ME by FD_ID]
+                        C --> D{Match Found?}
+                        D -- No --> E[Create ME Request]
+                        E --> F[Set Fields & Map ID]
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        class H stop
+                    </div>
+                </div>
+                <div class="panel">
+                    <h3 class="panel-title">Update Flow (ME → FD)</h3>
+                    <div class="mermaid">
+                        graph LR
+                        A[Request Updated] --> B{Loop Check}
+                        B -- Fails --> H[Halt]
+                        B -- Passes --> C[Search FD by ME_ID]
+                        C --> D{Match Found?}
+                        D -- Yes --> E[Compare Hash]
+                        E -- Differs --> F[Update FD Ticket]
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        class H stop
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. CHANGE DETECTION + FIELD MAPPING + PIPELINE -->
+        <section class="section" id="change">
+            <div class="section-header">
+                <span class="section-number">04</span>
+                <h2>Change Detection, Field Mapping & Pipeline</h2>
+            </div>
+            <p class="section-description">Skip no-op writes, translate fields between platforms, then walk the whole event through end to end.</p>
+
+            <h3 class="slide-subhead">Change Detection</h3>
+            <div class="panel">
+                <div class="mermaid">
+                    graph LR
+                    A[Incoming ticket_data] --> B[Generate SHA256 Hash<br>Subject + Desc + Priority + Status]
+                    B --> C{hash == stored_hash?}
+                    C -- YES --> D[Skip Write API Call]
+                    C -- NO --> E[Proceed & Store New Hash]
+
+                    classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                    classDef pass fill:#eff6ff,stroke:#3b82f6,stroke-width:2px;
+                    class D stop
+                    class E pass
+                </div>
+            </div>
+
+            <h3 class="slide-subhead">Field Mapping Reference</h3>
+            <div class="panel">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Freshdesk Field</th>
+                            <th></th>
+                            <th>ManageEngine Field</th>
+                            <th>Data Transformation Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>priority</code></td>
+                            <td class="arrow">↔</td>
+                            <td>Priority</td>
+                            <td>Low→Low, Medium→Normal, High→High</td>
+                        </tr>
+                        <tr>
+                            <td><code>status</code></td>
+                            <td class="arrow">↔</td>
+                            <td>Status</td>
+                            <td>Open→Open, Pending→On Hold, Resolved→Resolved</td>
+                        </tr>
+                        <tr>
+                            <td><code>subject</code></td>
+                            <td class="arrow">↔</td>
+                            <td>Subject</td>
+                            <td>Direct 1:1 Mapping</td>
+                        </tr>
+                        <tr>
+                            <td><code>description</code></td>
+                            <td class="arrow">↔</td>
+                            <td>Description</td>
+                            <td>Strip HTML if target system expects plain text</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 class="slide-subhead">End-to-End Pipeline</h3>
+            <div class="pipeline">
+                <div class="pipe-step">
+                    <span class="pipe-num">1</span>
+                    <h4>Intake</h4>
+                    <p>Event queued and throttled by Zoho Flow.</p>
+                </div>
+                <div class="pipe-step">
+                    <span class="pipe-num">2</span>
+                    <h4>Loop Guard</h4>
+                    <p>Tag / field check halts an echo instantly.</p>
+                </div>
+                <div class="pipe-step">
+                    <span class="pipe-num">3</span>
+                    <h4>Change Check</h4>
+                    <p>Hash comparison skips a no-op write.</p>
+                </div>
+                <div class="pipe-step">
+                    <span class="pipe-num">4</span>
+                    <h4>ID Match</h4>
+                    <p>Indexed search on the reciprocal field.</p>
+                </div>
+                <div class="pipe-step">
+                    <span class="pipe-num">5</span>
+                    <h4>Assemble & Send</h4>
+                    <p>Fields mapped, data dispatched via API.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 8. LIVE BUILD LOG -->
+        <section class="section" id="live">
+            <div class="section-header">
+                <span class="section-number">05</span>
+                <h2>Live Build Log: ME → Freshservice</h2>
+            </div>
+            <p class="section-description">Sections 01–07 describe the intended design. This section documents what's actually running today — two Zoho Flow Custom Functions, tested live against <code>harambee.freshservice.com</code>, plus every real bug that surfaced (and how each was fixed) while building them.</p>
+
+            <div class="stack">
+                <div class="panel">
+                    <h3 class="panel-title"><span class="status-dot dot-me"></span>Function 15 — Create Flow (ME → Freshservice)</h3>
+                    <div class="mermaid">
+                        graph TD
+                        A[ME request created] --> B{custom_fields.freshdesk_ticket_id<br>already set?}
+                        B -- Yes --> H[Skip: already_synced]
+                        B -- No --> C[Map priority / status / department<br>to FD codes — inlined, no shared helpers]
+                        C --> D[Resolve requester email:<br>ME email_id → fallback arg → default mailbox]
+                        D --> E[POST /api/v2/tickets<br>connection: harambee_freshservice]
+                        E --> F{response.ticket.id<br>present?}
+                        F -- No --> G[Return failed + raw response]
+                        F -- Yes --> I[Return success<br>custom_fields.me_id stamped on the new FD ticket]
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        classDef pass fill:#eff6ff,stroke:#3b82f6,stroke-width:2px;
+                        class H,G stop
+                        class I pass
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3 class="panel-title"><span class="status-dot dot-fd"></span>Function 16 — Update Flow (ME change → Freshservice)</h3>
+                    <div class="mermaid">
+                        graph TD
+                        A["ME request updated"] --> B{"fdTicketId<br>already known?"}
+                        B -- No --> C["GET /tickets/filter?query=<br>cf_me_id:'ID' - urlEncoded"]
+                        C --> D["Reuse full ticket already in<br>the filter response - no 2nd GET"]
+                        B -- Yes --> E["GET /tickets/:id<br>only on this path"]
+                        D --> F["Hash ME fields:<br>subject, description, priority, status"]
+                        E --> F
+                        F --> G["Hash FD's live current fields<br>the same way"]
+                        G --> H{"Hashes match?"}
+                        H -- Yes --> I["Skip: no_change"]
+                        H -- No --> J["PUT /tickets/:id<br>subject, description, priority, status, me_id"]
+
+                        classDef stop fill:#fef2f2,stroke:#ef4444,stroke-width:2px;
+                        classDef pass fill:#eff6ff,stroke:#3b82f6,stroke-width:2px;
+                        class I stop
+                        class J pass
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2" style="margin-top: 1.5rem;">
+                <div class="panel">
+                    <h3 class="panel-title">Requester email fallback chain</h3>
+<pre><span class="code-key">requesterEmail</span> = meTicket.get(<span class="code-str">"requester"</span>).get(<span class="code-str">"email_id"</span>);
+<span class="code-key">if</span> (requesterEmail == <span class="code-num">null</span> || requesterEmail == <span class="code-str">""</span>)
+{
+    requesterEmail = fallbackRequesterEmail;
+}
+<span class="code-key">if</span> (requesterEmail == <span class="code-num">null</span> || requesterEmail == <span class="code-str">""</span>)
+{
+    <span class="code-key">// CONFIGURE: a real mailbox/service account you own</span>
+    requesterEmail = <span class="code-str">"helpdesk@harambee.co.za"</span>;
+}</pre>
+                </div>
+                <div class="panel">
+                    <h3 class="panel-title">Resolving the FD ticket by me_id</h3>
+<pre><span class="code-key">filterQuery</span> = <span class="code-str">"\"cf_me_id:'"</span> + meId + <span class="code-str">"'\""</span>;
+<span class="code-key">encodedQuery</span> = zoho.encryption.urlEncode(filterQuery);
+
+<span class="code-key">searchResponse</span> = invokeurl
+[
+    url: <span class="code-str">".../tickets/filter?query="</span> + encodedQuery
+    type: GET
+    connection: <span class="code-str">"harambee_freshservice"</span>
+];
+
+<span class="code-key">matches</span> = searchResponse.get(<span class="code-str">"tickets"</span>);
+<span class="code-key">currentFdTicket</span> = matches.get(<span class="code-num">0</span>);  <span class="code-key">// full ticket already, reuse it</span></pre>
+                </div>
+            </div>
+
+            <div class="panel" style="margin-top: 1.5rem;">
+                <h3 class="panel-title">Change detection: live-vs-live, not a stored hash</h3>
+<pre><span class="code-key">meHash</span> = zoho.encryption.sha256(subject + <span class="code-str">"|"</span> + description + <span class="code-str">"|"</span> + fdPriority.toString() + <span class="code-str">"|"</span> + fdStatus.toString());
+<span class="code-key">fdHash</span> = zoho.encryption.sha256(fdSubject + <span class="code-str">"|"</span> + fdDescription + <span class="code-str">"|"</span> + fdCurrentPriority.toString() + <span class="code-str">"|"</span> + fdCurrentStatus.toString());
+
+<span class="code-key">if</span> (fdHash == meHash)
+{
+    <span class="code-key">return</span> {<span class="code-str">"status"</span>: <span class="code-str">"skipped"</span>, <span class="code-str">"reason"</span>: <span class="code-str">"no_change"</span>};
+}</pre>
+                <div class="note"><strong>Why not a stored hash:</strong> the design in Section 04 assumes a <code>last_sync_hash</code> custom field on both platforms. It doesn't actually exist on Freshservice — a PUT including it was rejected live with <code>invalid_field</code>. So instead of comparing against a remembered value, both sides are re-hashed fresh on every run and compared directly.</div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        (async function () {
+            // Mermaid measures each diagram's text via getBBox(), which only works
+            // while the container has real layout (i.e. isn't display:none). The
+            // CSS "hide every slide but .active" rule is gated behind
+            // body.slides-ready specifically so that, up until this point,
+            // EVERY slide is still visible and Mermaid can render all of them
+            // correctly - only once mermaid.run() has finished do we add
+            // slides-ready and start hiding the non-active ones. That's also
+            // why mermaid.initialize() in <head> now uses startOnLoad: false -
+            // otherwise it could fire before or after this, non-deterministically.
+            if (window.mermaid && typeof mermaid.run === 'function') {
+                try { await mermaid.run(); } catch (err) { /* a bad diagram shouldn't break slide navigation */ }
+            }
+            document.body.classList.add('slides-ready');
+
+            var slides = Array.prototype.slice.call(document.querySelectorAll('main.container > .hero, main.container > .section'));
+            var current = 0;
+
+            var nav = document.createElement('div');
+            nav.className = 'slide-nav';
+            nav.innerHTML =
+                '<div class="slide-nav-content">' +
+                    '<button class="slide-nav-btn" id="slidePrev" type="button">&#8249; Prev</button>' +
+                    '<div class="slide-page-indicator">' +
+                        '<span class="slide-page-text" id="slidePageText"></span>' +
+                        '<div class="slide-dots" id="slideDots"></div>' +
+                    '</div>' +
+                    '<button class="slide-nav-btn" id="slideNext" type="button">Next &#8250;</button>' +
+                '</div>';
+            document.body.appendChild(nav);
+
+            var dotsContainer = nav.querySelector('#slideDots');
+            slides.forEach(function (slide, i) {
+                var dot = document.createElement('button');
+                dot.type = 'button';
+                dot.className = 'slide-dot';
+                dot.setAttribute('aria-label', 'Go to slide ' + (i + 1) + (slide.id ? ': ' + slide.id : ''));
+                dot.addEventListener('click', function () { goTo(i); });
+                dotsContainer.appendChild(dot);
+            });
+
+            var prevBtn = nav.querySelector('#slidePrev');
+            var nextBtn = nav.querySelector('#slideNext');
+            var pageText = nav.querySelector('#slidePageText');
+            var dots = Array.prototype.slice.call(dotsContainer.querySelectorAll('.slide-dot'));
+
+            function indexForId(id) {
+                for (var i = 0; i < slides.length; i++) {
+                    if (slides[i].id === id) return i;
+                }
+                return -1;
+            }
+
+            function render() {
+                slides.forEach(function (slide, i) {
+                    slide.classList.toggle('active', i === current);
+                });
+                dots.forEach(function (dot, i) {
+                    dot.classList.toggle('active', i === current);
+                });
+                pageText.textContent = (current + 1) + ' / ' + slides.length;
+                prevBtn.disabled = current === 0;
+                nextBtn.disabled = current === slides.length - 1;
+                if (slides[current].id) {
+                    history.replaceState(null, '', '#' + slides[current].id);
+                }
+            }
+
+            function goTo(index) {
+                if (index < 0 || index >= slides.length) return;
+                current = index;
+                render();
+                window.scrollTo(0, 0);
+            }
+
+            prevBtn.addEventListener('click', function () { goTo(current - 1); });
+            nextBtn.addEventListener('click', function () { goTo(current + 1); });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'ArrowRight' || e.key === 'PageDown') goTo(current + 1);
+                if (e.key === 'ArrowLeft' || e.key === 'PageUp') goTo(current - 1);
+            });
+
+            // Header nav links and the Contents table both link to "#sectionId" -
+            // jump to that slide instead of scrolling to it, since only one
+            // slide is visible on screen at a time.
+            document.querySelectorAll('a[href^="#"]').forEach(function (link) {
+                link.addEventListener('click', function (e) {
+                    var idx = indexForId(link.getAttribute('href').slice(1));
+                    if (idx !== -1) {
+                        e.preventDefault();
+                        goTo(idx);
+                    }
+                });
+            });
+
+            var startIdx = indexForId(window.location.hash.replace('#', ''));
+            goTo(startIdx !== -1 ? startIdx : 0);
+        })();
+    </script>
+
+</body>
+</html>
